@@ -1,0 +1,80 @@
+{
+ "engine_version": "2.0.0",
+ "engine_zip": {
+  "bytes": 3850735,
+  "files": 170,
+  "name": "hfcare_web_engine_v2.0.0.zip",
+  "sha256": "9642f1ad05eb6edf5ee477a85765d65243755f2054efb52780983f8ef0799614"
+ },
+ "files": {
+  ".nojekyll": {
+   "bytes": 0,
+   "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "404.html": {
+   "bytes": 738,
+   "sha256": "e0919524702365974d3008ebc230f2fff33a274d77e66c71fe547e3501edb60f"
+  },
+  "hfweb/bridge.py": {
+   "bytes": 21662,
+   "sha256": "7503aae21ef53723a30c16a0e32e2fa7bfa772389111ec6931f7d9603e0c7fd1"
+  },
+  "hfweb/config.js": {
+   "bytes": 212,
+   "sha256": "0a85f3ecf6258c14b784e38ef5b2af1064fc256e7558df1889bae9c5d82e44f4"
+  },
+  "hfweb/pyodide/pyodide-lock.json": {
+   "bytes": 119077,
+   "sha256": "5dc2fc119108bc148c7457dc86e7675b5c87e1cafd420b9c34c1eaef7b36c010"
+  },
+  "hfweb/pyodide/pyodide.asm.mjs": {
+   "bytes": 1250344,
+   "sha256": "f7cdc8ece80678ceb712f8e65ebe6d3a83203a180c399865f49612a051693635"
+  },
+  "hfweb/pyodide/pyodide.asm.wasm": {
+   "bytes": 9598218,
+   "sha256": "cc36e3cab04fdfc9a63ff13eb52eae2b911bf46c025cc7b281f394bd3de1d5e6"
+  },
+  "hfweb/pyodide/pyodide.mjs": {
+   "bytes": 17931,
+   "sha256": "6f1d60f7bf529beb300f0f47983c921d3982363640ba20af0e38efdddbc66109"
+  },
+  "hfweb/pyodide/python_stdlib.zip": {
+   "bytes": 2545637,
+   "sha256": "fa1957e5777068fc4f7437f96d860ae2fbe9c19732ba06c84e004ec16dd7dd7a"
+  },
+  "hfweb/shell.css": {
+   "bytes": 9038,
+   "sha256": "648f99a5a316aa7d1db2127d9f9a1a1a4f7463e071d5a0024f429f6b54314a9e"
+  },
+  "hfweb/shell.js": {
+   "bytes": 32811,
+   "sha256": "4cd3b0d52dfda5ad8245a949957f9d23a9897aa8466e63606b92a034bec0d954"
+  },
+  "hfweb/site-packages.zip": {
+   "bytes": 848924,
+   "sha256": "8d296f65b3fecb9cda23fd7bccc279560332e30814ceba6e57ab3d39f194fa2b"
+  },
+  "hfweb/vendor/LICENSE.txt": {
+   "bytes": 1081,
+   "sha256": "77ec43864f44a5705bfc3781c2614a524284c585e60e049e3cdafa420c05aa7d"
+  },
+  "hfweb/vendor/scrypt.js": {
+   "bytes": 17811,
+   "sha256": "544292934136527d60acc9e337d8c7b953f412e81314aa551a12d4230afd449d"
+  },
+  "hfweb/worker.js": {
+   "bytes": 4375,
+   "sha256": "7a3831f6dd5b18fa50ff261ff2c43b1ac9d22090054ecfae39146a8874232418"
+  },
+  "index.html": {
+   "bytes": 4739,
+   "sha256": "d3b8308e6c0236b737fa7705611fa03d8a31325ac98b7aeaa68a0e6cc316d7c6"
+  },
+  "sw.js": {
+   "bytes": 3021,
+   "sha256": "30c5704533ae73fad92fb59c6485549e5ac8729ece026ba49b561e89afa243ee"
+  }
+ },
+ "schema": "hfcare.web_site_manifest/1"
+}
