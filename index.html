@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<!-- B141（B-36）：GitHub Pages 不能設回應標頭，以 meta 宣告外殼頁之內容安全政策。
+     Google 登入元件之來源依 Google Identity Services 文件（script、frame、connect、style 四處；
+     developers.google.com/identity/gsi/web/guides/get-google-api-clientid，2026-04-06 版）；
+     參照政策依同文件建議 strict-origin-when-cross-origin。
+     後台為 Apps Script（script.google.com 回應經 script.googleusercontent.com 轉址）。 -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://accounts.google.com/gsi/client; style-src 'self' https://accounts.google.com/gsi/style; frame-src 'self' https://accounts.google.com/gsi/; connect-src 'self' https://accounts.google.com/gsi/ https://script.google.com https://script.googleusercontent.com; img-src 'self' data:; worker-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<title>HF-Care 心衰竭跨職類照護（教學試用）</title>
+<link rel="stylesheet" href="hfweb/shell.css">
+</head>
+<body>
+<header id="bar">
+  <b class="brand"><svg viewBox="0 0 44 20" aria-hidden="true" focusable="false"><path d="M1 11h9l3-3 3 3h3l2 4 3-14 3 18 2-8h3l3-2 3 2h6"/></svg>HF-Care</b><span class="tag">教學試用，僅限虛構資料</span>
+  <span id="site"></span>
+  <span id="who"></span>
+  <span id="pt"></span>
+  <span id="sync" role="status" aria-live="polite"></span>
+  <span class="grow"></span>
+  <button id="btnDash" class="sec" hidden>儀表板</button>
+  <button id="btnClose" class="sec" hidden><span class="lg">存檔並</span>關閉病人</button>
+  <button id="btnOut" class="sec" hidden>登出</button>
+</header>
+<main id="panel">
+  <section class="intro" aria-hidden="true">
+    <p class="lead">心衰竭床邊照護與教學</p>
+    <svg class="trace" viewBox="0 0 720 40" preserveAspectRatio="none" focusable="false"><path d="M0 26H90l8-6 8 6h14l4 4 8-26 8 32 6-12h18q12-9 24 0H330l8-6 8 6h14l4 4 8-26 8 32 6-12h18q12-9 24 0H570l8-6 8 6h14l4 4 8-26 8 32 6-12h18q12-9 24 0H720"/></svg>
+  </section>
+  <section id="vLoading" class="card"><p id="loadMsg">載入中…</p></section>
+
+  <section id="vLogin" class="card" hidden>
+    <h1>醫療人員登入</h1>
+    <p class="why">以 Google 帳號登入；帳號須在控制台「授權名單」內。</p>
+    <div id="gbtn" class="gbtn"></div>
+    <p id="loginMsg" class="bad" role="alert"></p>
+    <nav class="modes" aria-label="其他入口">
+      <a id="lnkHome" href="#home-report" hidden>居家回報（病人或家屬）</a>
+      <a id="lnkLearn" href="#learn" hidden>心臟衰竭的自我照顧（衛教）</a>
+    </nav>
+  </section>
+
+  <section id="vPatients" class="card" hidden>
+    <h1>開啟或新增病人</h1>
+    <form id="fOpen">
+      <label for="mrn">病歷號（請用虛構號碼；末 4 碼須為數字，例如 TEST0001）</label>
+      <input id="mrn" autocomplete="off" maxlength="32" required pattern=".*[0-9]{4}" title="末 4 碼須為數字，例如 TEST0001">
+      <p><button type="submit">開啟</button></p>
+    </form>
+    <div id="vConfirm" class="confirm" role="alertdialog" aria-labelledby="confirmMsg" hidden>
+      <p id="confirmMsg"></p>
+      <p><button id="btnCreate" type="button">確定新增</button> <button id="btnCancel" type="button" class="sec">取消，重新輸入</button></p>
+    </div>
+    <p class="why">病歷號只在你的瀏覽器內換算成代號，原始號碼不會上傳。</p>
+    <p id="openMsg" class="bad" role="alert"></p>
+    <h2 id="plistH">你近期開啟過的病人</h2>
+    <div id="plist"></div>
+  </section>
+
+  <section id="vHome" class="card" hidden>
+    <h1>居家回報</h1>
+    <p id="homeBanner" class="note" role="note"></p>
+    <form id="fHome1">
+      <label for="hcode">代碼（8 碼，護理師給您的）</label>
+      <input id="hcode" autocomplete="off" inputmode="latin" maxlength="9" required>
+      <p><button type="submit">下一步</button></p>
+    </form>
+    <div id="homeForm"></div>
+    <div id="homeCrit"></div>
+    <p id="homeMsg" class="bad" role="alert"></p>
+    <p id="homeDone" class="okmsg" role="status"></p>
+    <p class="why"><a href="./">醫療人員登入</a></p>
+  </section>
+
+  <section id="vLearn" class="card" hidden>
+    <div id="learnBody"></div>
+    <p class="why"><a href="./">醫療人員登入</a></p>
+  </section>
+</main>
+<iframe id="app" title="HF-Care 照護頁面" hidden></iframe>
+<script src="hfweb/config.js"></script>
+<script src="hfweb/shell.js"></script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+<!doctype html><meta charset="utf-8"><title>HF-Care</title>
+<script>
+// 直接開啟（或重新整理）照護頁網址時，GitHub Pages 找不到該路徑而回本頁；導回 HF-Care 首頁。
+// 不讀寫瀏覽器儲存：以網址第一段試探網站是否位於子路徑（帳號.github.io/hfcare/），否則回根目錄。
+(function () {
+  var seg = location.pathname.split("/")[1];
+  var cand = seg ? "/" + seg + "/" : "/";
+  if (cand === "/") { location.replace("/"); return; }
+  fetch(cand + "hfweb/manifest.json", { method: "HEAD", cache: "no-store" })
+    .then(function (r) { location.replace(r.ok ? cand : "/"); })
+    .catch(function () { location.replace("/"); });
+})();
+</script>
+<p>正在返回 HF-Care 首頁…</p>
