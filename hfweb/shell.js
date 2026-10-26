@@ -50,19 +50,50 @@
   }
 
   /* ───────── Apps Script 呼叫（text/plain 以免跨網域預檢） ───────── */
+  /*GAS-CALL-BEGIN*/
+  // B143（v2.0.0 後續 A-09）：保留 HTTP 狀態與錯誤代碼；只讀之冪等操作遇網路中斷、非 JSON 回應
+  //（Apps Script 之 HTML 錯誤頁）或 5xx 時自動重試 2 次。寫入操作不在此重試（存檔另以 saveId 冪等）。
+  //: 本網站所需之後台版本（＝同一部署包之 Code.gs 之 HF.VERSION；tests/test_b143_web 守對應）。
+  var EXPECTED_BACKEND = "B143-1";
+  var GAS_IDEMPOTENT = ["publicConfig", "loginNonce", "config", "engine", "listPatients", "dashboard", "learn"];
+  async function gasCall(fetchFn, url, op, body, sleep) {
+    var idem = GAS_IDEMPOTENT.indexOf(op) >= 0, tries = idem ? 3 : 1, last = null;
+    for (var i = 0; i < tries; i++) {
+      if (i) await sleep(300 * i * i + 200);
+      var r;
+      try {
+        r = await fetchFn(url, { method: "POST", body: body, headers: { "Content-Type": "text/plain;charset=utf-8" },
+                                 redirect: "follow" });
+      } catch (e) {
+        last = Object.assign(new Error("連不到雲端後台（網路或網址設定）"), { code: "NET", status: 0 });
+        continue;
+      }
+      var j = null;
+      try { j = await r.json(); } catch (e) {
+        last = Object.assign(new Error("雲端後台回應格式錯誤（HTTP " + r.status + "）"),
+                             { code: "BADRESP", status: r.status });
+        continue;
+      }
+      if (!j || !j.ok) {
+        var err = Object.assign(new Error((j && j.error) || "雲端後台錯誤"),
+                                { code: (j && j.code) || "ERR", status: r.status });
+        if (idem && r.status >= 500) { last = err; continue; }
+        throw err;
+      }
+      return j;
+    }
+    last.attempts = tries;
+    throw last;
+  }
+  /*GAS-CALL-END*/
   async function gas(op, args) {
     const body = JSON.stringify(Object.assign({ op, token: S.token }, args || {}));
-    let r;
     try {
-      r = await fetch(CFG.gasUrl, { method: "POST", body, headers: { "Content-Type": "text/plain;charset=utf-8" }, redirect: "follow" });
-    } catch (e) { throw Object.assign(new Error("連不到雲端後台（網路或網址設定）"), { code: "NET" }); }
-    let j;
-    try { j = await r.json(); } catch (e) { throw Object.assign(new Error("雲端後台回應格式錯誤"), { code: "NET" }); }
-    if (!j.ok) {
-      if (j.code === "AUTH" && op !== "login") { S.token = null; }
-      throw Object.assign(new Error(j.error || "雲端後台錯誤"), { code: j.code });
+      return await gasCall(fetch, CFG.gasUrl, op, body, (ms) => new Promise((res) => setTimeout(res, ms)));
+    } catch (e) {
+      if (e.code === "AUTH" && op !== "login") { S.token = null; }
+      throw e;
     }
-    return j;
   }
 
   /* ───────── Worker 管理 ───────── */
@@ -151,6 +182,12 @@
   async function afterLogin() {
     loadMsg("讀取設定…");
     const conf = await gas("config");
+    // B143：網站與後台（Code.gs）須為同一部署包（與程式包同一約定，fail-closed）——舊版後台缺
+    // 本版之職類即時覆核、外部連線授權碼、存檔冪等等行為，靜默沿用會使功能看似存在而實際未生效。
+    if (conf.version !== EXPECTED_BACKEND) {
+      throw new Error("雲端後台（Code.gs）版本為 " + (conf.version || "未知") + "，本網站需要 " + EXPECTED_BACKEND +
+        "。請管理者以同一個部署包之「2_貼到AppsScript/Code.gs」整份重貼，並「部署→管理部署→新版本」。");
+    }
     S.pepper = conf.pepper; S.leaseMinutes = conf.leaseMinutes || 10; S.adoptions = conf.adoptions || [];
     S.siteTables = conf.siteTables || {}; S.siteSettings = conf.siteSettings || {};
     S.user = { personId: conf.user.personId, name: conf.user.name, role: conf.user.role };
@@ -219,6 +256,9 @@
       loadMsg("向雲端取得病人資料…");
       const r = await gas("openPatient", { key, wantEdit: true, create: !!create });
       if (!r.exists) { S.spare = Promise.resolve(W); askCreate(mrn); return; }
+      // B143（A-03）：職類以後台當下之授權名單為準（原只在登入時讀一次，改職類須重新登入）。
+      const roleNote = roleChange(S.user, r);
+      if (roleNote) { S.user.role = r.role; $("who").textContent = S.user.name + "（" + S.user.role + "）"; }
       const zip = r.snapshot ? b64ToBuf(r.snapshot) : null;
       const dataDir = "/data/" + key;
       await W.call("restore", { dataDir, zip: zip ? new Uint8Array(zip) : null });
@@ -232,7 +272,9 @@
       // 以病歷號開啟／加入就診（與伺服器版同一路徑：同一病歷號併入同一筆就診）。
       const home = await appRequest("GET", "/", {}, null, true);
       const csrf = (new TextDecoder().decode(home.body).match(/name='csrf' value='([^']+)'/) || [])[1] || "";
-      const form = new URLSearchParams({ mrn, setting: "", csrf });
+      // B143（v2.0.0 後續 A-02）：照護場域由開啟表單帶入（原固定送空字串，畫面恆為「未指定」）。
+      const setting = ($("setting") && $("setting").value) || "";
+      const form = new URLSearchParams({ mrn, setting, csrf });
       const res = await appRequest("POST", "/", { "content-type": "application/x-www-form-urlencoded" },
                                    new TextEncoder().encode(form.toString()).buffer, true);
       const loc = (res.headers.find((h) => h[0].toLowerCase() === "location") || [])[1];
@@ -246,6 +288,7 @@
       }
       opened = true;
       enterApp(loc);
+      if (roleNote) setSync(roleNote, "busy");
       if (S.cur.mode === "edit") {
         markDirty(); startRenew();      // 新病人／新就診也要落雲端
         if (imported) setSync("已併入居家回報 " + imported + " 筆（同步後確認）", "busy");
@@ -311,7 +354,8 @@
   /* ───────── 雲端同步與編輯權 ───────── */
   function markDirty() {
     const c = S.cur; if (!c || c.mode !== "edit") return;
-    c.dirty = true; setSync("未同步", "busy");
+    c.dirty = true; c.unsynced = (c.unsynced || 0) + 1;
+    setSync("未同步：" + c.unsynced + " 項待送出", "busy");   // 「未同步（原因）」保留給失敗（e2e 與畫面同一約定）
     clearTimeout(S.saveTimer);
     S.saveTimer = setTimeout(() => { saveNow().catch(() => {}); }, 3000);
   }
@@ -331,12 +375,50 @@
     return { ok: true, text: "已同步 v" + v, cls: "ok", version: v, readonly: false, retry: false };
   }
   /*SYNC-OUTCOME-END*/
+  /*SHELL-POLICY-BEGIN*/
+  // B143（v2.0.0 後續 A-08）：閒置時有未同步修改者不轉唯讀（原行為：存檔失敗仍轉唯讀，修改遺失）。
+  // B143（A-03）：後台回應之職類與外殼不同時以後台為準；後台未回職類（舊版後台）時不改。
+  function roleChange(user, res) {
+    if (!user || !res || !res.role || res.role === user.role) return "";
+    if (res.personId && user.personId && res.personId !== user.personId) {
+      throw Object.assign(new Error("登入身分與後台不一致，請重新登入"), { code: "AUTH" });
+    }
+    return "您的職類已由 " + user.role + " 改為 " + res.role + "（依控制台授權名單）";
+  }
+  function idleAction(c, now, lastActivity, leaseMinutes) {
+    if (!c || c.mode !== "edit") return "none";
+    if (now - lastActivity <= leaseMinutes * 60000) return "none";
+    return (c.dirty || c.failed) ? "keep_unsynced" : "readonly";
+  }
+  // 關閉／登出：最後一次存檔失敗而仍有未同步修改時，須明確放棄（列出項數）才關閉。
+  function closePrompt(c) {
+    if (!c || c.mode !== "edit" || !(c.dirty || c.failed)) return "";
+    return "有 " + (c.unsynced || 1) + " 項修改尚未同步到雲端" + (c.failed ? "（" + c.failed + "）" : "") +
+           "。按「確定」放棄這些修改並關閉；按「取消」保持開啟，稍後再試。";
+  }
+  // 存檔失敗之下一步：權杖失效 → 原地重新登入（保留 Worker 與修改）；網路或回應格式錯誤 → 以同一
+  // saveId 重試（後台已寫入時回放結果，不誤判版本衝突）；租約或版本衝突 → 唯讀。
+  function saveFailureAction(err) {
+    var code = err && err.code;
+    if (code === "AUTH") return "relogin";
+    if (code === "LEASE" || code === "CONFLICT") return "readonly";
+    if (code === "NET" || code === "BADRESP") return "retry_same_id";
+    return "retry";
+  }
+  /*SHELL-POLICY-END*/
+  function randomId() { const a = new Uint8Array(12); crypto.getRandomValues(a); return Array.from(a, (b) => ("0" + b.toString(16)).slice(-2)).join(""); }
+  function syncedAt() {
+    const c = S.cur; const e = $("syncAt"); if (!e) return;
+    e.textContent = c && c.lastSyncAt ? "最後成功同步 " + c.lastSyncAt : "";
+  }
   async function saveNow() {
     const c = S.cur; if (!c || c.mode !== "edit" || !c.dirty) return;
     if (S.saving) { await S.saving; return saveNow(); }
     S.saving = (async () => {
       c.dirty = false; setSync("同步中", "busy");
       const base = c.version;
+      const sentUnsynced = c.unsynced || 0;
+      if (!c.saveId) c.saveId = randomId();
       try {
         const snap = await c.W.call("snapshot");
         // B141（B-30）：只送後台尚未收到之事件；群體統計所需之本病人指標貢獻與居家代碼雜湊列一併送出。
@@ -344,24 +426,40 @@
         const tch = JSON.parse(await c.W.call("teachRowsSince", { after: c.teachMax }));
         const contrib = JSON.parse(await c.W.call("contrib"));
         const codes = JSON.parse(await c.W.call("homeCodes"));
-        const r = await gas("savePatient", { key: c.key, leaseToken: c.leaseToken, baseVersion: base,
-                                             snapshot: bufToB64(new Uint8Array(snap)), kpiRows: k.rows,
-                                             kpiUnparsable: k.unparsable, teachRows: tch.rows, contrib,
-                                             homeCodes: codes });
+        const args = { key: c.key, leaseToken: c.leaseToken, baseVersion: base, saveId: c.saveId,
+                       snapshot: bufToB64(new Uint8Array(snap)), kpiRows: k.rows,
+                       kpiUnparsable: k.unparsable, teachRows: tch.rows, contrib, homeCodes: codes };
+        let r;
+        try { r = await gas("savePatient", args); }
+        catch (e1) {
+          // 已寫入卻回錯誤頁時，以同一 saveId 再送一次：後台回放第一次之結果（A-09）。
+          if (saveFailureAction(e1) !== "retry_same_id") throw e1;
+          await new Promise((res) => setTimeout(res, 1500));
+          r = await gas("savePatient", args);
+        }
         const o = syncOutcome(base, r, null);
         if (!o.ok) { const e = new Error("伺服器未確認新版本"); e.code = "NOVERSION"; throw e; }
         c.version = o.version; c.failed = null; c.kpiMax = r.kpiMax; c.teachMax = r.teachMax;
+        c.saveId = null; c.unsynced = Math.max(0, (c.unsynced || 0) - sentUnsynced);
+        // 回放：後台存的是第一次送出之快照；之後之修改須再送一次。
+        if (r.replay) { c.dirty = true; c.unsynced = Math.max(1, c.unsynced); }
+        c.lastSyncAt = new Date().toLocaleTimeString("zh-TW", { hour: "2-digit", minute: "2-digit", hour12: false });
+        syncedAt(); hideRelogin();
         if (c.pendingAck) {
           try { await gas("ackHomeReports", { key: c.key, leaseToken: c.leaseToken, results: c.pendingAck }); c.pendingAck = null; }
           catch (e) { /* 下次存檔再確認；併入以送出時點去重，不會重複 */ }
         }
         setSync(c.dirty ? "未同步（有新修改，稍後自動同步）" : o.text, c.dirty ? "busy" : "ok");
+        if (c.dirty) { clearTimeout(S.saveTimer); S.saveTimer = setTimeout(() => { saveNow().catch(() => {}); }, 3000); }
       } catch (e) {
         c.dirty = true; c.failed = e.message;
         const o = syncOutcome(base, null, e);
-        setSync(o.text, o.cls);
-        if (o.readonly) {
-          c.mode = "readonly"; stopRenew();
+        const act = saveFailureAction(e);
+        setSync(o.text, o.cls); syncedAt();
+        if (act === "relogin") {
+          showRelogin();
+        } else if (o.readonly) {
+          c.mode = "readonly"; stopRenew(); c.saveId = null;
           alert("未能存到雲端：" + e.message + "\n本次未同步之修改不會保存。請關閉此病人後重新開啟。");
         } else {
           clearTimeout(S.saveTimer); S.saveTimer = setTimeout(() => { saveNow().catch(() => {}); }, 15000);
@@ -375,12 +473,17 @@
     stopRenew();
     S.renewTimer = setInterval(async () => {
       const c = S.cur; if (!c || c.mode !== "edit") return;
-      if (Date.now() - S.lastActivity > S.leaseMinutes * 60000) {
-        // 閒置逾時：不再續約，讓編輯權自動釋放；先把未同步內容存上去。
+      if (idleAction(c, Date.now(), S.lastActivity, S.leaseMinutes) !== "none") {
+        // 閒置逾時：先把未同步內容存上去；仍有未同步修改者保持編輯權與修改（A-08），
+        // 只有已全部同步者才釋放編輯權轉唯讀。
         try { await saveNow(); } catch (e) {}
-        c.mode = "readonly"; c.holder = "（閒置逾時，編輯權已釋放）"; stopRenew();
-        setSync("閒置逾時，已轉唯讀；請關閉後重新開啟", "ro");
-        return;
+        if (idleAction(c, Date.now(), S.lastActivity, S.leaseMinutes) === "keep_unsynced") {
+          setSync("閒置中：有 " + (c.unsynced || 1) + " 項未同步，保持編輯權直到同步成功", "bad");
+        } else {
+          c.mode = "readonly"; c.holder = "（閒置逾時，編輯權已釋放）"; stopRenew();
+          setSync("閒置逾時，已轉唯讀；請關閉後重新開啟", "ro");
+          return;
+        }
       }
       try { await gas("renewLease", { key: c.key, leaseToken: c.leaseToken }); }
       catch (e) { if (e.code === "LEASE") { c.mode = "readonly"; stopRenew(); setSync("編輯權已失效：" + e.message, "bad"); } }
@@ -388,16 +491,50 @@
   }
   function stopRenew() { if (S.renewTimer) clearInterval(S.renewTimer); S.renewTimer = null; }
 
+  // B143（A-08）：權杖失效時原地重新登入——保留 Worker、畫面與未同步之修改；登入成功即重送。
+  async function showRelogin() {
+    const c = S.cur; if (!c) return;
+    $("reloginMsg").textContent = "登入已逾時：有 " + (c.unsynced || 1) + " 項修改尚未同步，仍保留在此視窗。" +
+      "請重新登入以同步（不會關閉病人）。";
+    $("vRelogin").hidden = false;
+    try {
+      await loadGis();
+      const nonce = (await gas("loginNonce")).nonce;
+      window.google.accounts.id.initialize({ client_id: S.pub.clientId, callback: onRelogin, nonce,
+        auto_select: false, cancel_on_tap_outside: true, ux_mode: "popup", itp_support: true });
+      $("gbtn2").textContent = "";
+      window.google.accounts.id.renderButton($("gbtn2"), { type: "standard", theme: "outline", size: "large",
+        text: "signin_with", shape: "rectangular", locale: "zh-TW", width: 260 });
+    } catch (e) { $("reloginMsg").textContent += "（登入元件無法載入：" + e.message + "）"; }
+  }
+  function hideRelogin() { const v = $("vRelogin"); if (v) v.hidden = true; }
+  async function onRelogin(resp) {
+    try {
+      const r = await gas("login", { idToken: resp && resp.credential });
+      if (S.user && r.personId !== S.user.personId) {
+        S.token = null;
+        await showRelogin();
+        $("reloginMsg").textContent = "請以原本之帳號重新登入（目前病人由 " + S.user.name + " 編輯中）。";
+        return;
+      }
+      S.token = r.token; hideRelogin();
+      await saveNow();
+    } catch (e) {
+      $("reloginMsg").textContent = "重新登入失敗：" + e.message;
+      showRelogin();
+    }
+  }
   async function closePatient() {
     const c = S.cur; if (!c) return;
     if (c.mode === "edit") {
       // B130 W08：最後一次存檔失敗時保持開啟（不釋放編輯權、不關閉），狀態列顯示
       // 「未同步（原因）」；使用者可再按一次「存檔並關閉病人」重試。
-      try { await saveNow(); }
-      catch (e) { alert("最後一次存檔失敗：" + e.message + "\n病人保持開啟、修改仍在畫面上；請確認網路後再按一次「存檔並關閉病人」重試。"); return; }
-      if (c.dirty) { setSync("未同步（有新修改尚未送出）", "bad"); return; }
+      try { await saveNow(); } catch (e) { /* 由下方明確放棄確認處理 */ }
+      const q = closePrompt(c);
+      if (q && !confirm(q)) { setSync("未同步（" + (c.unsynced || 1) + " 項）；病人保持開啟", "bad"); return; }
       try { await gas("releaseLease", { key: c.key, leaseToken: c.leaseToken }); } catch (e) {}
     }
+    hideRelogin();
     stopRenew(); clearTimeout(S.saveTimer);
     $("app").src = "about:blank";
     c.W.kill(); S.cur = null;
@@ -543,6 +680,7 @@
     catch (err) { await showPatients("開啟失敗：" + err.message); }
   };
   $("btnClose").onclick = () => closePatient().catch((e) => alert(e.message));
+  $("btnDiscard").onclick = () => closePatient().catch((e) => alert(e.message));
   $("btnDash").onclick = () => openDashboard().catch((e) => showPatients("儀表板：" + e.message));
   $("btnOut").onclick = async () => {
     if (S.cur) await closePatient();

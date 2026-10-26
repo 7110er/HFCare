@@ -1,10 +1,10 @@
 {
- "engine_version": "2.0.0",
+ "engine_version": "2.1.0",
  "engine_zip": {
-  "bytes": 3850735,
+  "bytes": 3890885,
   "files": 170,
-  "name": "hfcare_web_engine_v2.0.0.zip",
-  "sha256": "9642f1ad05eb6edf5ee477a85765d65243755f2054efb52780983f8ef0799614"
+  "name": "hfcare_web_engine_v2.1.0.zip",
+  "sha256": "885a30297696fab0bb4592ffd220ba84e669423d8de41a53e4d126d69d2a508f"
  },
  "files": {
   ".nojekyll": {
@@ -44,16 +44,16 @@
    "sha256": "fa1957e5777068fc4f7437f96d860ae2fbe9c19732ba06c84e004ec16dd7dd7a"
   },
   "hfweb/shell.css": {
-   "bytes": 9038,
-   "sha256": "648f99a5a316aa7d1db2127d9f9a1a1a4f7463e071d5a0024f429f6b54314a9e"
+   "bytes": 9243,
+   "sha256": "aae7cdc0467a04b00672ae17a93ac22bc22c21d49b1c3128c5dc79c15362f4c3"
   },
   "hfweb/shell.js": {
-   "bytes": 32811,
-   "sha256": "4cd3b0d52dfda5ad8245a949957f9d23a9897aa8466e63606b92a034bec0d954"
+   "bytes": 40884,
+   "sha256": "83aea692fc164ab700d403e8a1bc6006dce875576835c331fd5ab34e0a21f3b9"
   },
   "hfweb/site-packages.zip": {
    "bytes": 848924,
-   "sha256": "8d296f65b3fecb9cda23fd7bccc279560332e30814ceba6e57ab3d39f194fa2b"
+   "sha256": "f0a5e8598926f8b5b19a3f676caf56ec5cde841d98369339a41201ee1934e8a8"
   },
   "hfweb/vendor/LICENSE.txt": {
    "bytes": 1081,
@@ -68,8 +68,8 @@
    "sha256": "7a3831f6dd5b18fa50ff261ff2c43b1ac9d22090054ecfae39146a8874232418"
   },
   "index.html": {
-   "bytes": 4739,
-   "sha256": "d3b8308e6c0236b737fa7705611fa03d8a31325ac98b7aeaa68a0e6cc316d7c6"
+   "bytes": 5263,
+   "sha256": "97e2dfc5d572896b8b6c9c5035e6e6ce78a0e9bd1e6a5a0053bcbd14697f8289"
   },
   "sw.js": {
    "bytes": 3021,
