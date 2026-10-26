@@ -20,11 +20,17 @@
   <span id="who"></span>
   <span id="pt"></span>
   <span id="sync" role="status" aria-live="polite"></span>
+  <span id="syncAt"></span>
   <span class="grow"></span>
   <button id="btnDash" class="sec" hidden>儀表板</button>
   <button id="btnClose" class="sec" hidden><span class="lg">存檔並</span>關閉病人</button>
   <button id="btnOut" class="sec" hidden>登出</button>
 </header>
+<div id="vRelogin" class="confirm relogin" role="alertdialog" aria-labelledby="reloginMsg" hidden>
+  <p id="reloginMsg"></p>
+  <div id="gbtn2" class="gbtn"></div>
+  <p><button id="btnDiscard" type="button" class="sec">放棄未同步修改並關閉病人</button></p>
+</div>
 <main id="panel">
   <section class="intro" aria-hidden="true">
     <p class="lead">心衰竭床邊照護與教學</p>
@@ -48,6 +54,9 @@
     <form id="fOpen">
       <label for="mrn">病歷號（請用虛構號碼；末 4 碼須為數字，例如 TEST0001）</label>
       <input id="mrn" autocomplete="off" maxlength="32" required pattern=".*[0-9]{4}" title="末 4 碼須為數字，例如 TEST0001">
+      <label for="setting">照護場域</label>
+      <select id="setting"><option value="">未指定</option><option>住院</option><option>門診</option>
+        <option>急診</option><option>居家</option></select>
       <p><button type="submit">開啟</button></p>
     </form>
     <div id="vConfirm" class="confirm" role="alertdialog" aria-labelledby="confirmMsg" hidden>
