@@ -59,7 +59,7 @@ form p{margin:20px 0 0}
 input:focus-visible{outline:none;border-color:var(--ink);box-shadow:0 0 0 3px #f2c6c9,0 0 0 4px var(--trace)}
 .bad{color:var(--bad);font-weight:600}.bad:empty{display:none}
 .why{color:var(--mut);font-size:14px;margin:4px 0 0}
-#loadMsg{margin:0;color:var(--ink);font-weight:600}
+#loadMsg{margin:0;color:var(--ink);font-weight:600;white-space:pre-line}
 table{border-collapse:collapse;width:100%;font-size:14.5px}
 th,td{border-bottom:1px solid var(--line);padding:10px 12px;text-align:left}
 th{background:#f3f6f9;color:var(--ink);font-size:13.5px}

@@ -54,7 +54,7 @@
   // B143（v2.0.0 後續 A-09）：保留 HTTP 狀態與錯誤代碼；只讀之冪等操作遇網路中斷、非 JSON 回應
   //（Apps Script 之 HTML 錯誤頁）或 5xx 時自動重試 2 次。寫入操作不在此重試（存檔另以 saveId 冪等）。
   //: 本網站所需之後台版本（＝同一部署包之 Code.gs 之 HF.VERSION；tests/test_b143_web 守對應）。
-  var EXPECTED_BACKEND = "B143-1";
+  var EXPECTED_BACKEND = "B150-3";
   var GAS_IDEMPOTENT = ["publicConfig", "loginNonce", "config", "engine", "listPatients", "dashboard", "learn"];
   async function gasCall(fetchFn, url, op, body, sleep) {
     var idem = GAS_IDEMPOTENT.indexOf(op) >= 0, tries = idem ? 3 : 1, last = null;
@@ -225,7 +225,7 @@
       const rows = r.patients;
       $("plist").innerHTML = rows.length ? "<table><thead><tr><th>病人代號</th><th>版本</th><th>最後更新</th><th>目前編輯</th></tr></thead><tbody>" +
         rows.map((p) => "<tr><td><code>" + esc(p.key.slice(0, 10)) + "…</code></td><td>" + esc(p.version) +
-          "</td><td>" + esc(String(p.updatedAt || "").slice(0, 16).replace("T", " ")) + " " + esc(p.updatedBy || "") +
+          "</td><td>" + esc(taipeiTime(p.updatedAt)) + " " + esc(p.updatedBy || "") +
           "</td><td>" + esc(p.editing || "—") + "</td></tr>").join("") + "</tbody></table>" +
         "<p class='why'>開啟既有病人時，請輸入同一個病歷號。其他同仁照護的病人不列在這裡，仍可輸入病歷號開啟。</p>"
         : "<p class='why'>近期沒有你開啟過的病人。</p>";
@@ -300,6 +300,50 @@
   }
   function randomKey() { const a = new Uint8Array(32); crypto.getRandomValues(a); return bufToB64(a); }
 
+  /** B149（C-07）：以假名鍵開啟病人（儀表板缺口連結）。不經病歷號：後台以鍵取檔，導向最近就診。 */
+  async function openPatientByKey(key) {
+    if (S.cur) await closePatient();
+    if (S.cur) return;
+    const W = await takeWorker();
+    let opened = false;
+    try {
+      loadMsg("向雲端取得病人資料…");
+      const r = await gas("openPatient", { key, wantEdit: true, create: false });
+      if (!r.exists) throw new Error("找不到這位病人之資料檔");
+      const roleNote = roleChange(S.user, r);
+      if (roleNote) { S.user.role = r.role; $("who").textContent = S.user.name + "（" + S.user.role + "）"; }
+      const zip = r.snapshot ? b64ToBuf(r.snapshot) : null;
+      const dataDir = "/data/" + key;
+      await W.call("restore", { dataDir, zip: zip ? new Uint8Array(zip) : null });
+      loadMsg("開啟病人（約 3–8 秒）…");
+      await W.call("setup", { dataDir, principalId: S.user.personId, displayName: S.user.name,
+                              role: S.user.role, pepper: S.pepper, secretKey: randomKey(),
+                              adoptions: S.adoptions, siteTables: S.siteTables,
+                              siteSettings: S.siteSettings, patientKey: key });
+      S.cur = { W, key, mode: r.mode, holder: r.holder, leaseToken: r.leaseToken, version: r.version,
+                dirty: false, failed: null, kpiMax: r.kpiMax || 0, teachMax: r.teachMax || 0, pendingAck: null };
+      const eid = await W.call("latestEncounter");
+      opened = true;
+      enterApp(eid ? "/e/" + eid : "/");
+      if (roleNote) setSync(roleNote, "busy");
+      if (S.cur.mode === "edit") startRenew();
+    } catch (e) {
+      if (!opened) { W.kill(); prepareSpare(); S.cur = null; }
+      throw e;
+    }
+  }
+
+  /** B149：儀表板首屏先顯示後台彙總要點（Worker 啟動需數秒；先讓人看到數字）。 */
+  function quickSummary(agg) {
+    const a = agg || {};
+    const esc_ = a.esc || {};
+    const withDen = Object.keys(esc_).filter((k) => (esc_[k] || {}).denominator > 0).length;
+    const gaps = (a.my_gaps || []).length;
+    return "群體統計（後台計算）：" + (a.patients || 0) + " 位病人、" + (a.events || 0) + " 筆事件\n" +
+      "有分母之指標 " + withDen + " 項" + (gaps ? "；你近 30 日照護之病人有缺口者 " + gaps + " 位" : "") +
+      "\n正在載入完整儀表板…";
+  }
+
   function enterApp(path) {
     const c = S.cur;
     $("pt").textContent = "病人 " + c.key.slice(0, 10) + "…";
@@ -330,6 +374,13 @@
                         body: new TextEncoder().encode(JSON.stringify({ ok: false, error: msg })) }
                     : { status: 423, headers: [["Content-Type", "text/html; charset=utf-8"]],
                         body: new TextEncoder().encode("<meta charset=utf-8><p>" + esc(msg) + "</p>") };
+    }
+    // B149（C-07）：儀表板「我的照護缺口」之連結 /_open/<假名鍵>——外殼以假名鍵開檔（不送病歷號）。
+    const om = /^\/_open\/([A-Za-z0-9_-]{16,128})$/.exec(path.split("?")[0]);
+    if (om && !write) {
+      setTimeout(() => { openPatientByKey(om[1]).catch((e) => loadMsg("無法開啟：" + e.message, true)); }, 0);
+      return { status: 200, headers: [["Content-Type", "text/html; charset=utf-8"]],
+               body: new TextEncoder().encode("<meta charset=utf-8><p>開啟病人中…</p>") };
     }
     // 內部請求（開啟就診）取應用內路徑；畫面框請求才加網站子路徑前綴。
     const r = await c.W.call("request", { method, path, headers, body, base: internal ? "/" : BASE },
@@ -406,6 +457,17 @@
     return "retry";
   }
   /*SHELL-POLICY-END*/
+  // B146（E-06）：病人清單之更新時間以台北時間顯示（後台存 UTC ISO；原以字串切片顯示 UTC，差 8 小時）。
+  // 無法解析者原樣顯示並標註，不猜時區。
+  function taipeiTime(iso) {
+    const t = Date.parse(String(iso || ""));
+    if (!iso) return "";
+    if (isNaN(t)) return String(iso) + "（時間格式無法判讀）";
+    const d = new Date(t + 8 * 3600 * 1000);
+    const p2 = (n) => ("0" + n).slice(-2);
+    return d.getUTCFullYear() + "-" + p2(d.getUTCMonth() + 1) + "-" + p2(d.getUTCDate()) + " " +
+      p2(d.getUTCHours()) + ":" + p2(d.getUTCMinutes()) + "（台北）";
+  }
   function randomId() { const a = new Uint8Array(12); crypto.getRandomValues(a); return Array.from(a, (b) => ("0" + b.toString(16)).slice(-2)).join(""); }
   function syncedAt() {
     const c = S.cur; const e = $("syncAt"); if (!e) return;
@@ -548,6 +610,7 @@
     if (S.cur) return;
     loadMsg("向後台取得群體統計…");
     const d = await gas("dashboard");
+    loadMsg(quickSummary(d.aggregates));
     const W = await takeWorker();
     try {
       await W.call("setupDashboard", { dataDir: "/data/_dashboard", aggregates: JSON.stringify(d.aggregates),

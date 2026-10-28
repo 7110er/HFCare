@@ -75,6 +75,8 @@ const handlers = {
   kpiRowsSince: (a) => bridge.kpi_rows_since(a.after || 0),
   teachRowsSince: (a) => bridge.teaching_rows_since(a.after || 0),
   contrib: () => bridge.contributions(),
+  // B149（C-07）：以假名鍵開檔後導向最近之就診（不經病歷號）。
+  latestEncounter: () => bridge.latest_encounter(),
   homeCodes: () => bridge.home_codes_export(),
   importHomeReports: (a) => bridge.import_home_reports(a.json || "[]"),
 };

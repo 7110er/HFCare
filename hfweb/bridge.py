@@ -162,8 +162,36 @@ def contributions():
     from hfcare_engine import kpi_events as KE
     _STATE["app"].extensions["hfcare"]["kpi_reinstall"]()
     res = KE.compute_all_kpi_metrics()
-    return json.dumps({mid: {"numerator": r.get("numerator"), "denominator": r.get("denominator")}
-                       for mid, r in sorted(res.items())}, sort_keys=True)
+    # B146（E-05、G5）：除役指標（LOCAL-BAL-3）不進病人貢獻；結構指標（ESC-1.x）以控制台
+    # 「結構聲明」工作表於後台計算（院層級，非逐病人加總），亦不進病人貢獻。
+    out = {mid: {"numerator": r.get("numerator"), "denominator": r.get("denominator")}
+           for mid, r in sorted(res.items())
+           if mid not in KE.DEPRECATED_METRICS and not mid.startswith("ESC-1.")}
+    # B147（S2-02、BS-07）：時窗型指標之計數與到期日（不含出院日、追蹤日、識別碼）；
+    # 後台以台北當日重判到期未追蹤者（不待本病人下次開檔）。
+    out["_windows"] = KE.window_contribution()
+    # B149（S4；C-06～C-08）：月別（近 12 個月；只送有分母之月份）、分層值、可量測指標之照護缺口。
+    from hfcare_engine import kpi_stats as KS
+    from hfcare_engine import kpi_measurability as KM
+    today = KE.taipei_today()
+    out["_monthly"] = KS.monthly_contribution(KS.recent_months(today, 12))
+    st = _STATE["app"].extensions["hfcare"]["store"]
+    lab = st.latest_answers_by_pseudonym()
+    pid = _STATE.get("patient_key") or (sorted(lab)[0] if lab else "")
+    strata = KS.strata_of_patients({p: v["answers"] for p, v in lab.items()},
+                                   {p: v["setting"] for p, v in lab.items()})
+    out["_strata"] = strata.get(pid) or {"phenotype": "未宣告", "setting": "未指定",
+                                         "age": "未知", "sex": "未知"}
+    if out["_strata"]["setting"] not in ("住院", "門診", "急診", "居家"):
+        out["_strata"]["setting"] = "未指定"
+    measurable = [m for m in KE.kpi_metric_ids() if KM.permits_rate(m)]
+    out["_gaps"] = {"metrics": KS.patient_gaps(pid, measurable) if pid else [], "since": today}
+    return json.dumps(out, sort_keys=True, ensure_ascii=False)
+
+
+def latest_encounter():
+    """B149（C-07）：本資料檔最近之就診編號（外殼以假名鍵開檔後導向；不經病歷號）。"""
+    return _STATE["app"].extensions["hfcare"]["store"].latest_encounter_id()
 
 
 def home_codes_export():
@@ -273,7 +301,11 @@ def setup(data_dir, principal_id, display_name, role, pepper, secret_key,
         os.environ.pop("HFCARE_SITE_ADOPTION_FILE", None)
     # B132：試算表「藥名對照」（B134 起另含「詞彙」）→ 站點覆寫表檔。
     tables = json.loads(site_tables_json or "{}")
-    if any(tables.get(k) for k in ("drug_name_map", "vocab_zh")):
+    # B146（G5）：結構聲明鍵存在（即使空列）亦寫檔，讓引擎知道站點表已提供（空＝未聲明，計 0）。
+    # B150：指標目標、介入註記（院方填）同一檔。
+    if any(tables.get(k) for k in ("drug_name_map", "vocab_zh")) or \
+            any(k in tables for k in ("structure_declarations", "metric_targets",
+                                      "metric_interventions")):
         tpath = os.path.join(os.path.dirname(os.path.abspath(data_dir)), "site_tables.json")
         with open(tpath, "w", encoding="utf-8") as fh:
             json.dump(tables, fh, ensure_ascii=False)
