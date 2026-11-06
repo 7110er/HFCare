@@ -174,7 +174,8 @@ def contributions():
     from hfcare_engine import kpi_stats as KS
     from hfcare_engine import kpi_measurability as KM
     today = KE.taipei_today()
-    out["_monthly"] = KS.monthly_contribution(KS.recent_months(today, 12))
+    # B156（v2.3 D-07、D-08）：近 24 個月（趨勢隨期間往回 12 期、run chart ≥12 點）。
+    out["_monthly"] = KS.monthly_contribution(KS.recent_months(today, 24))
     st = _STATE["app"].extensions["hfcare"]["store"]
     lab = st.latest_answers_by_pseudonym()
     pid = _STATE.get("patient_key") or (sorted(lab)[0] if lab else "")
@@ -186,6 +187,8 @@ def contributions():
         out["_strata"]["setting"] = "未指定"
     measurable = [m for m in KE.kpi_metric_ids() if KM.permits_rate(m)]
     out["_gaps"] = {"metrics": KS.patient_gaps(pid, measurable) if pid else [], "since": today}
+    # B156（v2.3 D-16）：資料可信度三項之計數（不含識別碼）。
+    out["_dq"] = KE.data_trust_contribution()
     return json.dumps(out, sort_keys=True, ensure_ascii=False)
 
 
@@ -305,7 +308,7 @@ def setup(data_dir, principal_id, display_name, role, pepper, secret_key,
     # B150：指標目標、介入註記（院方填）同一檔。
     if any(tables.get(k) for k in ("drug_name_map", "vocab_zh")) or \
             any(k in tables for k in ("structure_declarations", "metric_targets",
-                                      "metric_interventions")):
+                                      "metric_interventions", "external_outcomes")):
         tpath = os.path.join(os.path.dirname(os.path.abspath(data_dir)), "site_tables.json")
         with open(tpath, "w", encoding="utf-8") as fh:
             json.dump(tables, fh, ensure_ascii=False)

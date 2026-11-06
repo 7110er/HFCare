@@ -1,10 +1,10 @@
 {
- "engine_version": "2.2.0",
+ "engine_version": "2.3.0",
  "engine_zip": {
-  "bytes": 3963652,
+  "bytes": 3994980,
   "files": 174,
-  "name": "hfcare_web_engine_v2.2.0.zip",
-  "sha256": "ef0c02b7f1b665068017734479f9140487a5d5eda316c2309b80365a40b6f3ae"
+  "name": "hfcare_web_engine_v2.3.0.zip",
+  "sha256": "446e0a4331dfa4a00eeebcec64d33479ce99b808cc447354b28d087a914db0d7"
  },
  "files": {
   ".nojekyll": {
@@ -16,8 +16,8 @@
    "sha256": "e0919524702365974d3008ebc230f2fff33a274d77e66c71fe547e3501edb60f"
   },
   "hfweb/bridge.py": {
-   "bytes": 23952,
-   "sha256": "23c2b31e7d4c697459a450412c2ad3eb5ecb839ea2342ebb06b5cf795c83ef4a"
+   "bytes": 24210,
+   "sha256": "e432114d9fdd414ba4f692f659ef489cf570e7c15d64a441be447353b2761652"
   },
   "hfweb/config.js": {
    "bytes": 212,
@@ -49,11 +49,11 @@
   },
   "hfweb/shell.js": {
    "bytes": 44494,
-   "sha256": "453c0a2ff7ce7b4f8a442e195faa33a3c164ef1b4bf167db912da59083e186a3"
+   "sha256": "a7cfba5e60bca1c89b9758acad0138e051776081cc8f86dcc6fe3b4fcdcc4639"
   },
   "hfweb/site-packages.zip": {
    "bytes": 848924,
-   "sha256": "9122121063a863648280d7769c4e217d6e38ac76ae024011b9add0db2fa2a1af"
+   "sha256": "9ee29c75a5e7af9a2c12d53396fa5f9219bf73ac870701992782b84c5c431723"
   },
   "hfweb/vendor/LICENSE.txt": {
    "bytes": 1081,
