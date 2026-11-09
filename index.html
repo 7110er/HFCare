@@ -22,6 +22,7 @@
   <span id="sync" role="status" aria-live="polite"></span>
   <span id="syncAt"></span>
   <span class="grow"></span>
+  <button id="btnVerify" class="sec" hidden>核對病歷號以接續照護</button>
   <button id="btnDash" class="sec" hidden>儀表板</button>
   <button id="btnClose" class="sec" hidden><span class="lg">存檔並</span>關閉病人</button>
   <button id="btnOut" class="sec" hidden>登出</button>
@@ -30,6 +31,15 @@
   <p id="reloginMsg"></p>
   <div id="gbtn2" class="gbtn"></div>
   <p><button id="btnDiscard" type="button" class="sec">放棄未同步修改並關閉病人</button></p>
+</div>
+<div id="vVerify" class="confirm verify" role="dialog" aria-modal="true" aria-labelledby="verifyH" hidden>
+  <form id="fVerify">
+    <p id="verifyH"><b>核對病歷號以接續照護</b></p>
+    <label for="vmrn">請輸入此病人之病歷號（以 HIS 核對；只在你的瀏覽器內比對，不上傳）</label>
+    <input id="vmrn" autocomplete="off" maxlength="32" spellcheck="false">
+    <p id="verifyMsg" class="bad" role="alert" aria-live="polite"></p>
+    <p><button type="submit">確認</button> <button id="btnVerifyCancel" type="button" class="sec">取消（維持唯讀）</button></p>
+  </form>
 </div>
 <main id="panel">
   <section class="intro" aria-hidden="true">
@@ -65,8 +75,33 @@
     </div>
     <p class="why">病歷號只在你的瀏覽器內換算成代號，原始號碼不會上傳。</p>
     <p id="openMsg" class="bad" role="alert"></p>
+    <p><button id="btnHomeRefresh" type="button" class="sec">重新整理交班與團隊清單</button></p>
+    <section class="hsec" aria-labelledby="hMineH">
+      <h2 id="hMineH">交班給我</h2>
+      <div id="hMine"></div>
+    </section>
+    <section class="hsec" aria-labelledby="hSentH">
+      <h2 id="hSentH">我交出的</h2>
+      <div id="hSent"></div>
+    </section>
+    <section class="hsec" aria-labelledby="hTeamH">
+      <h2 id="hTeamH">團隊病人清單</h2>
+      <form id="fTeam" class="tfilter">
+        <label for="tfSetting">場域</label>
+        <select id="tfSetting"><option value="">全部</option><option>住院</option><option>門診</option>
+          <option>急診</option><option>居家</option><option>未指定</option></select>
+        <label class="popt"><input type="checkbox" id="tfMine"> 只看我職類有待辦</label>
+        <label class="popt"><input type="checkbox" id="tfOver"> 只看逾時</label>
+        <label for="tfCode">交班碼（8 碼）</label>
+        <input id="tfCode" autocomplete="off" maxlength="8" spellcheck="false">
+        <p><button type="submit" class="sec">篩選</button></p>
+      </form>
+      <p class="why">清單不含病歷號；交班碼不可反推病歷號。開啟後請以 HIS 核對身分；非你照護過之病人先以唯讀開啟，核對病歷號後才可承接。</p>
+      <div id="hTeam"></div>
+    </section>
     <h2 id="plistH">你近期開啟過的病人</h2>
     <div id="plist"></div>
+    <p class="why foot">本頁不含病歷號；假名不是匿名；所有開檔、清單查詢與病歷號核對皆記入稽核紀錄。</p>
   </section>
 
   <section id="vHome" class="card" hidden>
