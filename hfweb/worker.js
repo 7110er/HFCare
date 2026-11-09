@@ -56,7 +56,10 @@ const handlers = {
   setup: (a) => bridge.setup(a.dataDir, a.principalId, a.displayName, a.role,
                               a.pepper, a.secretKey, JSON.stringify(a.adoptions || []),
                               JSON.stringify(a.siteTables || {}), JSON.stringify(a.siteSettings || {}),
-                              a.patientKey || "")
+                              a.patientKey || "", "",
+                              // B157（W3）：同仁名單、交班投影覆蓋、唯讀檢視原因（空＝可編輯）。
+                              JSON.stringify(a.roster || []), JSON.stringify(a.overlay || {}),
+                              a.readonly || "")
                    .toJs({ dict_converter: Object.fromEntries }),
   // B141 W05：儀表板 Worker 只載入後台計算之群體統計（無任何病人事件）。
   setupDashboard: (a) => bridge.setup_dashboard(a.dataDir, a.aggregates, a.principalId, a.displayName,
@@ -77,8 +80,12 @@ const handlers = {
   contrib: () => bridge.contributions(),
   // B149（C-07）：以假名鍵開檔後導向最近之就診（不經病歷號）。
   latestEncounter: () => bridge.latest_encounter(),
+  // B157：以假名鍵開啟時登錄照護關係（verified／participant／readonly）並回最近就診編號。
+  joinLatest: (a) => bridge.join_latest_encounter(a.kind || ""),
   homeCodes: () => bridge.home_codes_export(),
   importHomeReports: (a) => bridge.import_home_reports(a.json || "[]"),
+  // B157（W3，§8.2）：交班佇列投影列（只列舉值與識別碼，無自由文字、無病歷號）。
+  handoffRows: () => bridge.handoff_rows(),
 };
 
 self.onmessage = async (ev) => {

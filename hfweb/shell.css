@@ -146,3 +146,26 @@ label.popt input{width:20px;height:20px;min-height:0;margin:0;flex:0 0 auto}
 article.ltopic{padding:14px 0;border-bottom:1px solid var(--line)}
 article.ltopic h2{margin:0 0 4px}
 article.ltopic p{margin:2px 0}
+
+/* B157（v2.4 §4、§6）：首頁交班與團隊清單；狀態以文字＋色表示（不只靠顏色） */
+.hsec{margin:8px 0 0}
+.htable td{vertical-align:top}
+.htable code.hc{font-size:14px;letter-spacing:.06em;background:#f3f6f9;border:1px solid var(--line);border-radius:4px;padding:1px 6px}
+.htable tr.st-assigned td:nth-child(5){color:var(--mut)}
+.htable tr.st-accepted td:nth-child(5){color:#1c4f8a;font-weight:700}
+.htable tr.st-returned td:nth-child(5){color:#8a4b00;font-weight:700}
+.htable tr.st-completed td:nth-child(5){color:var(--ok);font-weight:700}
+.htable b.od,.htable tr.od b.od{color:var(--bad)}
+.htable b.hr{color:var(--bad);font-size:12.5px}
+.why.empty{padding:10px 0}
+.why.foot{margin-top:24px;border-top:1px solid var(--line);padding-top:10px}
+.tfilter{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:flex-end}
+.tfilter label{margin:6px 0 2px}
+.tfilter select,.tfilter input{max-width:180px}
+.tfilter p{margin:0}
+select{font:inherit;font-size:16px;min-height:46px;padding:8px 10px;border:1px solid var(--ctl);border-radius:6px;background:#fff}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.verify{position:fixed;top:64px;left:50%;transform:translateX(-50%);z-index:40;width:min(460px,94vw);background:#fff;
+  box-shadow:0 4px 18px rgba(0,0,0,.18)}
+body.inapp #btnVerify{background:#fff;color:var(--ink);border-color:#fff;font-weight:800}
+@media (prefers-reduced-motion:no-preference){.verify{transition:opacity .18s}}

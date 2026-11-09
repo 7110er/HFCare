@@ -54,8 +54,10 @@
   // B143（v2.0.0 後續 A-09）：保留 HTTP 狀態與錯誤代碼；只讀之冪等操作遇網路中斷、非 JSON 回應
   //（Apps Script 之 HTML 錯誤頁）或 5xx 時自動重試 2 次。寫入操作不在此重試（存檔另以 saveId 冪等）。
   //: 本網站所需之後台版本（＝同一部署包之 Code.gs 之 HF.VERSION；tests/test_b143_web 守對應）。
-  var EXPECTED_BACKEND = "B156-1";
-  var GAS_IDEMPOTENT = ["publicConfig", "loginNonce", "config", "engine", "listPatients", "dashboard", "learn"];
+  var EXPECTED_BACKEND = "B158-1";
+  // B157：首頁與交班清單之讀取亦為冪等（verifyLog 計失敗次數，不重試）。
+  var GAS_IDEMPOTENT = ["publicConfig", "loginNonce", "config", "engine", "listPatients", "dashboard", "learn",
+                        "home", "listHandoffs", "listTeamPatients", "roster"];
   async function gasCall(fetchFn, url, op, body, sleep) {
     var idem = GAS_IDEMPOTENT.indexOf(op) >= 0, tries = idem ? 3 : 1, last = null;
     for (var i = 0; i < tries; i++) {
@@ -95,6 +97,109 @@
       throw e;
     }
   }
+
+  /*HOME-VIEW-BEGIN*/
+  // B157（v2.4 §4 H2–H4、§6）：首頁交班與團隊清單之呈現（純函式；tests/test_b157_w5_shell 以 node 執行）。
+  // 只呈現後台投影之列舉值與交班碼；不含病歷號、不含任何自由文字。類別與退回原因之中文與
+  // hfcare_app/handover.py 之 CATEGORY_CODES／RETURN_REASONS 同表（一致性測試核對）。
+  var HV = {
+    CAT: { MEDREC: "用藥核對", GDMT_TITRATE: "GDMT 起始／上調", LAB_MONITOR: "腎功能／血鉀複測",
+           EDU_TEACHBACK: "衛教與 teach-back", ADHERENCE: "順從度", FOLLOWUP_7D: "出院 7 日追蹤",
+           FOLLOWUP_6W: "出院 6 週追蹤", HOME_REPORT: "居家回報確認", REFERRAL: "轉介",
+           ASSESS_GAP: "補齊評估缺項", OTHER: "其他" },
+    RET: { NOT_MY_ROLE: "非本職類可處理", INSUFFICIENT_INFO: "資訊不足", PATIENT_UNREACHABLE: "聯絡不到病人",
+           DUPLICATE: "重複", OFF_DUTY: "不在班", OTHER: "其他" },
+    STATUS: { assigned: "待承接", accepted: "已承接", in_progress: "處理中", completed: "已完成", returned: "已退回" }
+  };
+  function hvEsc(x) { return String(x == null ? "" : x).replace(/[&<>"']/g, function (c) {
+    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
+  function hvTime(iso) {
+    var t = Date.parse(/(Z|[+-]\d{2}:\d{2})$/.test(String(iso || "")) ? iso : String(iso || "") + "Z");
+    if (!isFinite(t)) return "";
+    return new Date(t + 8 * 3600000).toISOString().slice(5, 16).replace("T", " ");
+  }
+  function hvOverdueText(r, nowMs) {
+    if (!r.overdue) return "";
+    var t = Date.parse(/(Z|[+-]\d{2}:\d{2})$/.test(String(r.due_at || "")) ? r.due_at : String(r.due_at || "") + "Z");
+    var h = isFinite(t) ? Math.max(1, Math.floor((nowMs - t) / 3600000)) : 0;
+    return "逾時 " + (h ? h + " 小時" : "");
+  }
+  function hvStatus(r) {
+    var s = HV.STATUS[r.status] || r.status;
+    if (r.status === "returned") s += "（" + (HV.RET[r.returned_reason] || "未註明") + "）";
+    if ((r.status === "accepted" || r.status === "in_progress") && r.accepted_by_name) s += "｜" + r.accepted_by_name;
+    return s;
+  }
+  function hvWho(r) {
+    if (r.escalation === "ESCALATED") return "原指定 " + (r.assignee_name || "同仁") + " 逾時，群組可承接";
+    if (r.escalation === "TARGET_DISABLED") return "原指定 " + (r.assignee_name || "同仁") + " 已停用，群組可承接";
+    return r.assignee_name ? "指定：" + r.assignee_name : "職類群組（" + r.owner_role + "）";
+  }
+  /** 交班列表格（box＝mine／sent）。每列一鍵【開啟】（data-key；不用行內事件，CSP）。 */
+  function handoffTable(rows, box, nowMs) {
+    if (!rows || !rows.length) {
+      return "<p class='why empty'>" + (box === "sent" ? "目前沒有你交出、尚未完成的項目。" :
+        "目前沒有交給你（或你的職類）的項目。") + "</p>";
+    }
+    return "<table class='htable'><thead><tr><th scope='col'>交班碼</th><th scope='col'>類別</th>" +
+      "<th scope='col'>" + (box === "sent" ? "交給" : "指派者") + "</th><th scope='col'>到期</th>" +
+      "<th scope='col'>狀態</th><th scope='col'><span class='sr-only'>動作</span></th></tr></thead><tbody>" +
+      rows.map(function (r) {
+        var od = hvOverdueText(r, nowMs);
+        return "<tr class='st-" + hvEsc(r.status) + (od ? " od" : "") + "'><td><code class='hc'>" + hvEsc(r.code) +
+          "</code></td><td>" + hvEsc(HV.CAT[r.category_code] || r.category_code) +
+          (r.risk_level === "high_risk" ? " <b class='hr'>高風險</b>" : "") +
+          (r.care_phase ? "<br><span class='why'>" + hvEsc(r.care_phase) + "</span>" : "") + "</td><td>" +
+          (box === "sent" ? hvEsc(hvWho(r)) : hvEsc(r.assigned_by_name) + "（" + hvEsc(r.assigned_role) + "）") +
+          "</td><td>" + hvEsc(hvTime(r.due_at) || "—") + (od ? "<br><b class='od'>" + hvEsc(od) + "</b>" : "") +
+          "</td><td>" + hvEsc(hvStatus(r)) + (box === "mine" && r.escalation ? "<br><span class='why'>" +
+          hvEsc(hvWho(r)) + "</span>" : "") + "</td><td><button type='button' class='sec' data-open='" +
+          hvEsc(r.key) + "' data-src='handoff'>開啟</button></td></tr>";
+      }).join("") + "</tbody></table>";
+  }
+  function teamTable(rows) {
+    if (!rows || !rows.length) return "<p class='why empty'>沒有符合條件之病人。</p>";
+    var st = function (x) {
+      if (!x) return "—";
+      return [x.phenotype, x.setting, x.age, x.sex].filter(function (v) { return v && v !== "未知" && v !== "未宣告"; })
+        .join("／") || "—";
+    };
+    return "<table class='htable'><thead><tr><th scope='col'>交班碼</th><th scope='col'>分型／場域／年齡層／性別</th>" +
+      "<th scope='col'>最後照護</th><th scope='col'>未結任務</th><th scope='col'><span class='sr-only'>動作</span></th>" +
+      "</tr></thead><tbody>" + rows.map(function (r) {
+        var open = Object.keys(r.openTasks || {}).sort().map(function (k) { return k + " " + r.openTasks[k]; }).join("、");
+        return "<tr" + (r.overdue ? " class='od'" : "") + "><td><code class='hc'>" + hvEsc(r.code) + "</code></td><td>" +
+          hvEsc(st(r.strata)) + "</td><td>" + hvEsc(hvTime(r.lastEncounterAt)) + "<br><span class='why'>" +
+          hvEsc(r.lastCare && r.lastCare.name || "") + (r.lastCare && r.lastCare.role ? "（" + hvEsc(r.lastCare.role) + "）" : "") +
+          "</span></td><td>" + hvEsc(open || "—") + (r.overdue ? "<br><b class='od'>逾時 " + hvEsc(r.overdue) + "</b>" : "") +
+          (r.editing ? "<br><span class='why'>編輯中：" + hvEsc(r.editing) + "</span>" : "") +
+          "</td><td><button type='button' class='sec' data-open='" + hvEsc(r.key) + "' data-src='team'>" +
+          (r.participant ? "開啟" : "查看") + "</button></td></tr>";
+      }).join("") + "</tbody></table>";
+  }
+  /** 開檔回應 → 引擎頁首之唯讀原因（空＝可編輯或他人編輯中之既有唯讀）。 */
+  function readonlyReason(r, nowMs) {
+    if (!r || r.mode === "edit") return "";
+    if (r.lockedUntil) {
+      var m = Math.max(1, Math.ceil((Date.parse(r.lockedUntil) - nowMs) / 60000));
+      return "核對失敗次數過多，約 " + m + " 分鐘內只能唯讀";
+    }
+    if (r.verifyNeeded) return "尚未核對病歷號";
+    return "";
+  }
+  /** 存檔後狀態列之交班佇列說明（不假綠：拒收者列出 item_id 前 12 碼與原因）。 */
+  function handoffSyncNote(r) {
+    if (!r) return "";
+    var rej = r.handoffRejected || [];
+    var t = r.handoffUpserted ? "；交班佇列更新 " + r.handoffUpserted + " 筆" : "";
+    if (rej.length) {
+      t += "；交班佇列拒收 " + rej.length + " 筆：" + rej.slice(0, 3).map(function (x) {
+        return String(x.item_id || "").slice(0, 12) + "（" + String(x.why || "").slice(0, 60) + "）"; }).join("、") +
+        (rej.length > 3 ? "…" : "");
+    }
+    return t;
+  }
+  /*HOME-VIEW-END*/
 
   /* ───────── Worker 管理 ───────── */
   function makeWorker() {
@@ -230,6 +335,47 @@
         "<p class='why'>開啟既有病人時，請輸入同一個病歷號。其他同仁照護的病人不列在這裡，仍可輸入病歷號開啟。</p>"
         : "<p class='why'>近期沒有你開啟過的病人。</p>";
     } catch (e) { $("plist").textContent = "讀取病人清單失敗：" + e.message; }
+    await showHome();
+  }
+
+  /* ───────── B157：首頁交班給我／我交出的／團隊病人清單（後台一次往返） ───────── */
+  async function showHome() {
+    if (!$("hMine")) return;
+    try {
+      const h = await gas("home");
+      renderHome(h);
+    } catch (e) {
+      $("hMine").textContent = "讀取交班清單失敗：" + e.message;
+    }
+  }
+  function renderHome(h) {
+    const now = Date.now();
+    const mine = (h.handoffs || {}).mine || [], sent = (h.handoffs || {}).sent || [];
+    $("hMineH").textContent = "交班給我（" + mine.length + "）" + ((h.overdue || {}).mine ? "｜逾時 " + h.overdue.mine : "");
+    $("hSentH").textContent = "我交出的（" + sent.length + "）" + ((h.overdue || {}).sent ? "｜逾時 " + h.overdue.sent : "");
+    $("hMine").innerHTML = handoffTable(mine, "mine", now);
+    $("hSent").innerHTML = handoffTable(sent, "sent", now);
+    renderTeam(h.team || [], h.teamScope, h.teamDays);
+  }
+  function renderTeam(rows, scope, days) {
+    $("hTeamH").textContent = "團隊病人清單（" + rows.length + "）" + (scope ? "｜範圍：" + scope + "、近 " + days + " 天" : "");
+    $("hTeam").innerHTML = teamTable(rows);
+  }
+  async function filterTeam() {
+    const code = String($("tfCode").value || "").trim().toLowerCase();
+    try {
+      const r = await gas("listTeamPatients", { setting: $("tfSetting").value, onlyMyRoleTasks: $("tfMine").checked,
+                                                onlyOverdue: $("tfOver").checked, code: /^[0-9a-f]{8}$/.test(code) ? code : "" });
+      renderTeam(r.patients || [], r.scope, r.days);
+    } catch (e) { $("hTeam").textContent = "讀取團隊病人清單失敗：" + e.message; }
+  }
+  function onHomeClick(ev) {
+    const b = ev.target.closest ? ev.target.closest("button[data-open]") : null;
+    if (!b) return;
+    const key = b.getAttribute("data-open");
+    if (!/^[0-9a-f]{16,128}$/.test(key)) return;
+    openPatientByKey(key, { source: b.getAttribute("data-src") || "team" })
+      .catch((e) => showPatients("開啟失敗：" + e.message));
   }
   function esc(x) { return String(x == null ? "" : x).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
 
@@ -254,7 +400,7 @@
     try {
       const key = await W.call("pseudonym", { mrn, pepper: S.pepper });
       loadMsg("向雲端取得病人資料…");
-      const r = await gas("openPatient", { key, wantEdit: true, create: !!create });
+      const r = await gas("openPatient", { key, wantEdit: true, create: !!create, via: "entered" });
       if (!r.exists) { S.spare = Promise.resolve(W); askCreate(mrn); return; }
       // B143（A-03）：職類以後台當下之授權名單為準（原只在登入時讀一次，改職類須重新登入）。
       const roleNote = roleChange(S.user, r);
@@ -263,12 +409,13 @@
       const dataDir = "/data/" + key;
       await W.call("restore", { dataDir, zip: zip ? new Uint8Array(zip) : null });
       loadMsg("開啟病人（約 3–8 秒）…");
-      await W.call("setup", { dataDir, principalId: S.user.personId, displayName: S.user.name,
+      await W.call("setup", Object.assign({ dataDir, principalId: S.user.personId, displayName: S.user.name,
                               role: S.user.role, pepper: S.pepper, secretKey: randomKey(),
                               adoptions: S.adoptions, siteTables: S.siteTables,
-                              siteSettings: S.siteSettings, patientKey: key });
+                              siteSettings: S.siteSettings, patientKey: key }, handoffSetup(r)));
       S.cur = { W, key, mode: r.mode, holder: r.holder, leaseToken: r.leaseToken, version: r.version,
-                dirty: false, failed: null, kpiMax: r.kpiMax || 0, teachMax: r.teachMax || 0, pendingAck: null };
+                dirty: false, failed: null, kpiMax: r.kpiMax || 0, teachMax: r.teachMax || 0, pendingAck: null,
+                verifyNeeded: !!r.verifyNeeded, lockedUntil: r.lockedUntil || "" };
       // 以病歷號開啟／加入就診（與伺服器版同一路徑：同一病歷號併入同一筆就診）。
       const home = await appRequest("GET", "/", {}, null, true);
       const csrf = (new TextDecoder().decode(home.body).match(/name='csrf' value='([^']+)'/) || [])[1] || "";
@@ -299,16 +446,23 @@
     }
   }
   function randomKey() { const a = new Uint8Array(32); crypto.getRandomValues(a); return bufToB64(a); }
+  // B157（W3/W5）：開檔時交給引擎之同仁名單（後台授權名單；不含電郵）、交班覆蓋狀態、唯讀原因。
+  function handoffSetup(r) {
+    return { roster: r.roster || [], overlay: r.handoffOverlay || {}, readonly: readonlyReason(r, Date.now()) };
+  }
 
   /** B149（C-07）：以假名鍵開啟病人（儀表板缺口連結）。不經病歷號：後台以鍵取檔，導向最近就診。 */
-  async function openPatientByKey(key) {
-    if (S.cur) await closePatient();
+  // B157（S-3）：交班清單、團隊清單亦以此開啟；非參與者由後台回唯讀（須核對病歷號才取得編輯權）。
+  async function openPatientByKey(key, opts) {
+    const o = opts || {};
+    if (S.cur) await closePatient("開啟該病人");
     if (S.cur) return;
     const W = await takeWorker();
     let opened = false;
     try {
       loadMsg("向雲端取得病人資料…");
-      const r = await gas("openPatient", { key, wantEdit: true, create: false });
+      const r = await gas("openPatient", { key, wantEdit: true, create: false, via: "key",
+                                           verified: !!o.verified, source: o.source || "gap" });
       if (!r.exists) throw new Error("找不到這位病人之資料檔");
       const roleNote = roleChange(S.user, r);
       if (roleNote) { S.user.role = r.role; $("who").textContent = S.user.name + "（" + S.user.role + "）"; }
@@ -316,17 +470,23 @@
       const dataDir = "/data/" + key;
       await W.call("restore", { dataDir, zip: zip ? new Uint8Array(zip) : null });
       loadMsg("開啟病人（約 3–8 秒）…");
-      await W.call("setup", { dataDir, principalId: S.user.personId, displayName: S.user.name,
+      await W.call("setup", Object.assign({ dataDir, principalId: S.user.personId, displayName: S.user.name,
                               role: S.user.role, pepper: S.pepper, secretKey: randomKey(),
                               adoptions: S.adoptions, siteTables: S.siteTables,
-                              siteSettings: S.siteSettings, patientKey: key });
+                              siteSettings: S.siteSettings, patientKey: key }, handoffSetup(r)));
       S.cur = { W, key, mode: r.mode, holder: r.holder, leaseToken: r.leaseToken, version: r.version,
-                dirty: false, failed: null, kpiMax: r.kpiMax || 0, teachMax: r.teachMax || 0, pendingAck: null };
-      const eid = await W.call("latestEncounter");
+                dirty: false, failed: null, kpiMax: r.kpiMax || 0, teachMax: r.teachMax || 0, pendingAck: null,
+                verifyNeeded: !!r.verifyNeeded, lockedUntil: r.lockedUntil || "" };
+      // B157：非成員以假名鍵開啟原為 404（只有已加入就診者看得到）；依後台決定之模式登錄照護關係。
+      const joinKind = r.mode !== "edit" ? "readonly" : (o.verified ? "verified" : "participant");
+      const eid = await W.call("joinLatest", { kind: joinKind });
       opened = true;
       enterApp(eid ? "/e/" + eid : "/");
       if (roleNote) setSync(roleNote, "busy");
-      if (S.cur.mode === "edit") startRenew();
+      if (S.cur.mode === "edit") {
+        startRenew();
+        if (o.verified) { setSync("編輯中（已核對）", "ok"); }
+      }
     } catch (e) {
       if (!opened) { W.kill(); prepareSpare(); S.cur = null; }
       throw e;
@@ -349,11 +509,41 @@
     $("pt").textContent = "病人 " + c.key.slice(0, 10) + "…";
     $("btnClose").hidden = false;
     if (c.mode === "edit") setSync("已同步 v" + c.version, "ok");
+    else if (c.lockedUntil) setSync("唯讀：核對失敗次數過多（" + taipeiTime(c.lockedUntil) + " 後可再核對）", "ro");
+    else if (c.verifyNeeded) setSync("唯讀：尚未核對病歷號", "ro");
     else setSync("唯讀：" + (c.holder || "他人") + " 正在編輯", "ro");
+    if ($("btnVerify")) $("btnVerify").hidden = !(c.verifyNeeded && !c.lockedUntil && c.mode !== "edit");
     VIEWS.forEach((v) => { $(v).hidden = true; });
     document.body.classList.add("inapp");
     $("app").hidden = false;
     $("app").src = BASE + path.replace(/^\//, "");
+  }
+  // B157（W0）：框換至 about:blank 並等候落點；逾時或落點不符回 false。
+  function navBlank(timeoutMs) {
+    const fr = $("app");
+    return new Promise((resolve) => {
+      let done = false, t = null, poll = null;
+      const finish = () => {
+        if (done) return; done = true; fr.removeEventListener("load", finish); clearTimeout(t); clearInterval(poll);
+        resolve(arrived(fr.contentWindow, "about:blank", BASE));
+      };
+      t = setTimeout(finish, timeoutMs || 8000);
+      fr.addEventListener("load", finish);
+      fr.src = "about:blank";
+      poll = setInterval(() => { if (arrived(fr.contentWindow, "about:blank", BASE)) finish(); }, 100);
+    });
+  }
+  // B157（W0）：進入畫面後核對框確實到達目標頁（Worker 首頁約 3–8 秒；上限 120 秒）；
+  // 未到即顯示錯誤、外殼不宣稱已切換。
+  async function verifyArrival(target) {
+    const fr = $("app");
+    for (let i = 0; i < 600; i++) {
+      if (arrived(fr.contentWindow, target, BASE)) return true;
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    setSync("畫面未切換到目標頁（" + target + "）；請關閉後重試", "bad");
+    $("pt").textContent = "（畫面未切換）";
+    return false;
   }
 
   /* ───────── 畫面框請求之轉接 ───────── */
@@ -368,7 +558,9 @@
       return { status: 303, headers: [["Location", BASE]], body: new Uint8Array(0) };
     }
     if (write && c.mode !== "edit" && !internal) {   // 內部開啟就診：唯讀時只在本機，不上傳
-      const msg = c.mode === "dashboard" ? "儀表板為唯讀" : "唯讀模式：" + (c.holder || "他人") + " 正在編輯這位病人，你的修改不會儲存。";
+      const msg = c.mode === "dashboard" ? "儀表板為唯讀" :
+        (c.verifyNeeded || c.lockedUntil) ? "唯讀檢視：請先在上方核對病歷號，核對後才可承接或修改。" :
+        "唯讀模式：" + (c.holder || "他人") + " 正在編輯這位病人，你的修改不會儲存。";
       const isJson = (headers["accept"] || "").includes("json") || path.endsWith("/answer");
       return isJson ? { status: 200, headers: [["Content-Type", "application/json"]],
                         body: new TextEncoder().encode(JSON.stringify({ ok: false, error: msg })) }
@@ -378,7 +570,7 @@
     // B149（C-07）：儀表板「我的照護缺口」之連結 /_open/<假名鍵>——外殼以假名鍵開檔（不送病歷號）。
     const om = /^\/_open\/([A-Za-z0-9_-]{16,128})$/.exec(path.split("?")[0]);
     if (om && !write) {
-      setTimeout(() => { openPatientByKey(om[1]).catch((e) => loadMsg("無法開啟：" + e.message, true)); }, 0);
+      setTimeout(() => { openPatientByKey(om[1], { source: "gap" }).catch((e) => loadMsg("無法開啟：" + e.message, true)); }, 0);
       return { status: 200, headers: [["Content-Type", "text/html; charset=utf-8"]],
                body: new TextEncoder().encode("<meta charset=utf-8><p>開啟病人中…</p>") };
     }
@@ -457,6 +649,37 @@
     return "retry";
   }
   /*SHELL-POLICY-END*/
+  /*NAV-GUARD-BEGIN*/
+  // B157（v2.4 W0；2026-11-06 實環境重現）：框內頁有未儲存題目（window.PENDING 非空）時，框之
+  // beforeunload 擋下換頁，外殼卻已切換標題與狀態——出現「標題已切換、框內仍舊頁」。改為：換頁前由外殼
+  // 讀框內 PENDING 並明確詢問；確認才清空並換頁；換頁後核對框內路徑，未到目標即還原外殼狀態。
+  function pendingInfo(win) {
+    var p = null;
+    try { p = win && win.PENDING; } catch (e) { return { n: 0, keys: [], readable: false }; }
+    var keys = (p && typeof p === "object") ? Object.keys(p) : [];
+    return { n: keys.length, keys: keys, readable: true };
+  }
+  function navPrompt(n, target) {
+    return "目前頁面有 " + n + " 題尚未儲存（輸入後未完成存檔）。按「確定」放棄這些輸入並" +
+           (target || "離開") + "；按「取消」留在本頁。";
+  }
+  // 回 true＝可換頁。confirmFn 回 false＝使用者取消（外殼狀態不得切換）。
+  function leaveGuard(win, confirmFn, target) {
+    var info = pendingInfo(win);
+    if (!info.n) return true;
+    if (!confirmFn(navPrompt(info.n, target))) return false;
+    try { win.PENDING = {}; } catch (e) { return false; }
+    return true;
+  }
+  // 換頁後之落點核對：target 為應用內路徑（"/dashboard"、"/e/<id>"）或 "about:blank"；base 為網站子路徑。
+  function arrived(win, target, base) {
+    var href = "", path = "";
+    try { href = String(win.location.href); path = String(win.location.pathname); } catch (e) { return false; }
+    if (target === "about:blank") return href === "about:blank";
+    var want = String(base || "/") + String(target).split("?")[0].replace(/^\//, "");
+    return path === want;
+  }
+  /*NAV-GUARD-END*/
   // B146（E-06）：病人清單之更新時間以台北時間顯示（後台存 UTC ISO；原以字串切片顯示 UTC，差 8 小時）。
   // 無法解析者原樣顯示並標註，不猜時區。
   function taipeiTime(iso) {
@@ -488,9 +711,11 @@
         const tch = JSON.parse(await c.W.call("teachRowsSince", { after: c.teachMax }));
         const contrib = JSON.parse(await c.W.call("contrib"));
         const codes = JSON.parse(await c.W.call("homeCodes"));
+        // B157（S-5）：交班佇列投影列（全量；只列舉值與識別碼；後台逐列驗證）。
+        const handoffRows = JSON.parse(await c.W.call("handoffRows"));
         const args = { key: c.key, leaseToken: c.leaseToken, baseVersion: base, saveId: c.saveId,
                        snapshot: bufToB64(new Uint8Array(snap)), kpiRows: k.rows,
-                       kpiUnparsable: k.unparsable, teachRows: tch.rows, contrib, homeCodes: codes };
+                       kpiUnparsable: k.unparsable, teachRows: tch.rows, contrib, homeCodes: codes, handoffRows };
         let r;
         try { r = await gas("savePatient", args); }
         catch (e1) {
@@ -511,7 +736,9 @@
           try { await gas("ackHomeReports", { key: c.key, leaseToken: c.leaseToken, results: c.pendingAck }); c.pendingAck = null; }
           catch (e) { /* 下次存檔再確認；併入以送出時點去重，不會重複 */ }
         }
-        setSync(c.dirty ? "未同步（有新修改，稍後自動同步）" : o.text, c.dirty ? "busy" : "ok");
+        const hn = handoffSyncNote(r);
+        setSync(c.dirty ? "未同步（有新修改，稍後自動同步）" : o.text + hn,
+                c.dirty ? "busy" : ((r.handoffRejected || []).length ? "busy" : "ok"));
         if (c.dirty) { clearTimeout(S.saveTimer); S.saveTimer = setTimeout(() => { saveNow().catch(() => {}); }, 3000); }
       } catch (e) {
         c.dirty = true; c.failed = e.message;
@@ -586,19 +813,69 @@
       showRelogin();
     }
   }
-  async function closePatient() {
+  /* ───────── B157（S-4）：病歷號核對（病歷號只在本機換算比對；後台只收結果） ───────── */
+  function showVerify() {
+    const c = S.cur; if (!c || !c.verifyNeeded) return;
+    $("vVerify").hidden = false; $("verifyMsg").textContent = "";
+    $("vmrn").value = ""; $("vmrn").focus();
+  }
+  function hideVerify() { $("vVerify").hidden = true; $("vmrn").value = ""; if ($("btnVerify")) $("btnVerify").focus(); }
+  async function doVerify() {
     const c = S.cur; if (!c) return;
+    const mrn = String($("vmrn").value || "");
+    $("vmrn").value = "";                                   // 讀取後立即清空；不寫入任何其他位置
+    if (!mrn) { $("verifyMsg").textContent = "請輸入病歷號"; return; }
+    let same = false;
+    try { same = (await c.W.call("pseudonym", { mrn, pepper: S.pepper })) === c.key; } catch (e) { same = false; }
+    let r;
+    try { r = await gas("verifyLog", { key: c.key, ok: same }); }
+    catch (e) { $("verifyMsg").textContent = "無法記錄核對結果：" + e.message; return; }
+    if (r.locked) {
+      c.lockedUntil = r.lockedUntil || ""; c.verifyNeeded = true;
+      $("verifyMsg").textContent = "核對失敗次數過多，" + taipeiTime(r.lockedUntil) + " 前只能唯讀。";
+      if ($("btnVerify")) $("btnVerify").hidden = true;
+      setSync("唯讀：核對失敗次數過多", "ro");
+      return;
+    }
+    if (!r.verified) {
+      $("verifyMsg").textContent = "病歷號與此病人不符，請以 HIS 核對。" +
+        (r.failures ? "（" + r.failures + "／" + (r.limit || 5) + "）" : "");
+      $("vmrn").focus();
+      return;
+    }
+    $("vVerify").hidden = true;
+    const key = c.key;
+    await closePatient("核對後重新開啟");
+    if (S.cur) return;
+    await openPatientByKey(key, { verified: true, source: "verify" });
+  }
+
+  async function closePatient(target) {
+    const c = S.cur; if (!c) return;
+    // B157（W0）：先問框內未儲存題目（取消即什麼都不變：不存檔、不釋放、不切換）。
+    if (!leaveGuard($("app").contentWindow, (q) => confirm(q), target || "關閉病人")) {
+      setSync("已取消離開：框內仍有未儲存題目", "busy");
+      return;
+    }
     if (c.mode === "edit") {
       // B130 W08：最後一次存檔失敗時保持開啟（不釋放編輯權、不關閉），狀態列顯示
       // 「未同步（原因）」；使用者可再按一次「存檔並關閉病人」重試。
       try { await saveNow(); } catch (e) { /* 由下方明確放棄確認處理 */ }
       const q = closePrompt(c);
       if (q && !confirm(q)) { setSync("未同步（" + (c.unsynced || 1) + " 項）；病人保持開啟", "bad"); return; }
+    }
+    // B157（W0）：框須確實離開舊頁才關閉；未離開（框之 beforeunload 擋下等）即還原外殼狀態並告知。
+    if (!(await navBlank())) {
+      setSync("無法離開目前頁面（框內頁拒絕換頁）；病人保持開啟，請先完成或清除未儲存之題目", "bad");
+      return;
+    }
+    if (c.mode === "edit") {
       try { await gas("releaseLease", { key: c.key, leaseToken: c.leaseToken }); } catch (e) {}
     }
     hideRelogin();
+    if ($("btnVerify")) $("btnVerify").hidden = true;
+    if ($("vVerify")) { $("vVerify").hidden = true; $("vmrn").value = ""; }
     stopRenew(); clearTimeout(S.saveTimer);
-    $("app").src = "about:blank";
     c.W.kill(); S.cur = null;
     prepareSpare();
     await showPatients();
@@ -606,7 +883,7 @@
 
   /* ───────── 儀表板（群體統計由後台計算；後台只回彙總） ───────── */
   async function openDashboard() {
-    if (S.cur) await closePatient();
+    if (S.cur) await closePatient("開啟儀表板");
     if (S.cur) return;
     loadMsg("向後台取得群體統計…");
     const d = await gas("dashboard");
@@ -622,6 +899,7 @@
       $("pt").textContent = "儀表板：" + d.patients + " 位病人、" + d.events + " 筆事件";
       setSync("唯讀", "ro");
     } catch (e) { W.kill(); prepareSpare(); S.cur = null; throw e; }
+    await verifyArrival("/dashboard");
   }
 
   /* ───────── 居家回報（#home-report）：不登入、不載入引擎 ───────── */
@@ -745,6 +1023,14 @@
   $("btnClose").onclick = () => closePatient().catch((e) => alert(e.message));
   $("btnDiscard").onclick = () => closePatient().catch((e) => alert(e.message));
   $("btnDash").onclick = () => openDashboard().catch((e) => showPatients("儀表板：" + e.message));
+  // B157：首頁交班與團隊清單、核對對話框（Esc 關閉；Enter 送出）。
+  $("vPatients").addEventListener("click", onHomeClick);
+  $("fTeam").onsubmit = (e) => { e.preventDefault(); filterTeam(); };
+  $("btnHomeRefresh").onclick = () => showHome();
+  $("btnVerify").onclick = () => showVerify();
+  $("fVerify").onsubmit = (e) => { e.preventDefault(); doVerify().catch((err) => { $("verifyMsg").textContent = err.message; }); };
+  $("btnVerifyCancel").onclick = () => hideVerify();
+  $("vVerify").addEventListener("keydown", (e) => { if (e.key === "Escape") hideVerify(); });
   $("btnOut").onclick = async () => {
     if (S.cur) await closePatient();
     if (S.cur) return;

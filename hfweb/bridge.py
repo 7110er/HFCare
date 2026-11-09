@@ -192,6 +192,47 @@ def contributions():
     return json.dumps(out, sort_keys=True, ensure_ascii=False)
 
 
+def handoff_rows():
+    """B157（W3，計畫 §8.2）：本資料檔全部任務與交付單之交班投影列（JSON 字串）。
+
+    只列舉值、識別碼與時間；不含 description、completion_criteria、completion_note、交付單內容或
+    病歷號。後台以 item_id upsert，並以病人檔版本單調覆寫（版本由後台以本次存檔版本標記）。"""
+    from hfcare_app import handover as HO
+    ext = _STATE["app"].extensions["hfcare"]
+    rows = HO.handoff_rows(ext["board"], ext.get("name_of"))
+    return json.dumps(rows, ensure_ascii=False, sort_keys=True)
+
+
+#: B157：以假名鍵開啟時登錄照護關係之依據（受控字串；寫入稽核）。
+JOIN_BASES = {
+    "verified": "以交班碼或團隊清單開啟，並於本機核對病歷號（交班承接）",
+    "participant": "以假名鍵開啟（本人曾參與此病人之照護）",
+    "readonly": "唯讀檢視（尚未核對病歷號；本 Worker 不存檔）",
+}
+
+
+def join_latest_encounter(kind):
+    """B157（v2.4 J1／J3）：以假名鍵開啟時，把本人登錄為最近一次就診之照護者，並寫稽核。
+
+    以病歷號開啟（POST /）本來就會加入就診；以假名鍵開啟不經病歷號，原本只有已是成員者看得到
+    （B149 照護缺口連結），非成員一律 404——交班承接與無交班接續因此無從檢視。後台已決定本次為
+    編輯（參與者或已核對）或唯讀（未核對）；唯讀時外殼不存檔，登錄只存在本 Worker 記憶體內之資料檔。
+    回傳就診編號（無就診則空字串）。kind 不在 JOIN_BASES 即拒絕。"""
+    if kind not in JOIN_BASES:
+        raise ValueError("未登錄之開啟方式：%r" % (kind,))
+    ext = _STATE["app"].extensions["hfcare"]
+    st = ext["store"]
+    eid = st.latest_encounter_id()
+    if not eid:
+        return ""
+    pid = _STATE["principal_id"]
+    role = (ext["users"].get_user(pid) or {}).get("role") or ""
+    if not st.care_relationship(eid, pid)["is_member"]:
+        st.join_care_team(eid, pid, role, basis=JOIN_BASES[kind])
+        st._audit("encounter.joined", actor=pid, actor_role=role, encounter_id=eid, basis=JOIN_BASES[kind])
+    return eid
+
+
 def latest_encounter():
     """B149（C-07）：本資料檔最近之就診編號（外殼以假名鍵開檔後導向；不經病歷號）。"""
     return _STATE["app"].extensions["hfcare"]["store"].latest_encounter_id()
@@ -266,7 +307,8 @@ def build_aggregate(data_dir, groups_json):
 
 def setup(data_dir, principal_id, display_name, role, pepper, secret_key,
           adoptions_json="[]", site_tables_json="{}", site_settings_json="{}",
-          patient_key="", _aggregates_path=""):
+          patient_key="", _aggregates_path="", roster_json="[]", overlay_json="{}",
+          view_readonly=""):
     """在 data_dir 上建立應用、確保本機臨時帳號存在並登入。
 
     adoptions_json：試算表「站點採納」工作表之具名採納列（可為空）。
@@ -275,6 +317,9 @@ def setup(data_dir, principal_id, display_name, role, pepper, secret_key,
     site_settings_json（B141 W02）：控制台「設定」之站點值；值域不合即不啟動。
     patient_key（B141）：本 Worker 之病人假名鍵；框內以其他病歷號開啟就診一律拒絕。
     principal_id 為控制台「授權名單」之 person_id；職類每次以名單為準（B141 W09）。
+    roster_json／overlay_json（B157 W3）：後台「授權名單」之啟用同仁（pid、name、role、status；不含電郵）
+    與交班投影之覆蓋狀態（item_id → ESCALATED／TARGET_DISABLED）；寫成交班脈絡檔，引擎只讀。
+    view_readonly（B157）：非空＝唯讀檢視之原因（例「尚未核對病歷號」）；頁首說明且按鈕停用。
     """
     os.environ.update(
         HFCARE_MODE="prototype", HFCARE_ENVIRONMENT="staging",
@@ -302,6 +347,22 @@ def setup(data_dir, principal_id, display_name, role, pepper, secret_key,
         os.environ["HFCARE_SITE_ADOPTION_FILE"] = path
     else:
         os.environ.pop("HFCARE_SITE_ADOPTION_FILE", None)
+    # B157（W3）：交班脈絡檔（同仁名單＋投影覆蓋）。一律寫檔（空名單亦寫）：瀏覽器版之指定個人
+    # 以後台名單驗證，不退回本機帳號表（本機帳號表只有本人）。
+    from hfcare_app import handover as _HO
+    cpath = os.path.join(parent, "handoff_context.json")
+    roster = [{"pid": str(x.get("pid") or ""), "name": str(x.get("name") or "")[:40],
+               "role": str(x.get("role") or ""), "status": str(x.get("status") or "active")}
+              for x in json.loads(roster_json or "[]") if isinstance(x, dict) and x.get("pid")]
+    overlay = {str(k): str(v) for k, v in (json.loads(overlay_json or "{}") or {}).items()}
+    with open(cpath, "w", encoding="utf-8") as fh:
+        json.dump({"roster": roster, "overlay": overlay}, fh, ensure_ascii=False)
+    os.environ[_HO.HANDOFF_CONTEXT_ENV] = cpath
+    from hfcare_app import app as _A
+    if str(view_readonly or "").strip():
+        os.environ[_A.VIEW_READONLY_ENV] = str(view_readonly)[:60]
+    else:
+        os.environ.pop(_A.VIEW_READONLY_ENV, None)
     # B132：試算表「藥名對照」（B134 起另含「詞彙」）→ 站點覆寫表檔。
     tables = json.loads(site_tables_json or "{}")
     # B146（G5）：結構聲明鍵存在（即使空列）亦寫檔，讓引擎知道站點表已提供（空＝未聲明，計 0）。
